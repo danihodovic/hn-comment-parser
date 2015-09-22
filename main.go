@@ -2,9 +2,11 @@
 //A simple CLI utility that fetches and filters comments of a Hacker News thread.
 //Can be used to scrape HN: Who's hiring quickly based on a few keywords
 //Uses the HN Api: https://github.com/HackerNews/API
+//Caches threads in a .comments directory
+
+//Use with npm's prettyjson
 
 //Todo: Add usage here
-//Use with npm's prettyjson
 //--------------------------------------------------------------------------------------------------------------------
 package main
 
@@ -17,12 +19,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/user"
+	"strconv"
 	"strings"
 )
 
 const (
-	defaultFileName = "comments.json"
-	urlToFormat     = "https://hacker-news.firebaseio.com/v0/item/%0.f.json"
+	urlToFormat = "https://hacker-news.firebaseio.com/v0/item/%0.f.json"
 )
 
 type hnThread struct {
@@ -109,15 +112,9 @@ func fetchFromAPI(threadID float64) []hnComment {
 	return comments
 }
 
-func fetchFromFile(filename string) ([]hnComment, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
+func fetchFromFile(file *os.File) ([]hnComment, error) {
 	var hnComments []hnComment
-	err = json.NewDecoder(file).Decode(&hnComments)
+	err := json.NewDecoder(file).Decode(&hnComments)
 	if err != nil {
 		return nil, err
 	}
@@ -136,6 +133,73 @@ func filterTextFromKeywords(keywords []string) filterFunction {
 	}
 }
 
+func fatalnWrapper(err error) {
+	if err != nil {
+		log.Fatalln(err)
+	}
+}
+
+func getCachedFile(fileName string) (*os.File, error) {
+	_, err := os.Stat(fileName)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, err
+		} else {
+			log.Fatalln(err)
+		}
+	}
+	return os.Open(fileName)
+}
+func fileExists(filename string) bool {
+	_, err := os.Stat(filename)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false
+		} else {
+			fatalnWrapper(err)
+		}
+	}
+	return true
+}
+
+func getComments(threadID int) []hnComment {
+	var comments []hnComment
+	var err error
+	var cachedFile *os.File
+	defer cachedFile.Close()
+
+	//This dir is located at ~/
+	usr, err := user.Current()
+	fatalnWrapper(err)
+	defaultDir := usr.HomeDir + "/" + ".cache/hn-article-parser"
+	cachedFileName := defaultDir + "/" + strconv.Itoa(threadID) + ".json"
+
+	//If the file exists, read from it otherwise fetch all hncomments and store them
+	if fileExists(cachedFileName) {
+		log.Println("Reading cached comments from", cachedFileName)
+		cachedFile, err = os.Create(cachedFileName)
+		fatalnWrapper(err)
+		comments, err = fetchFromFile(cachedFile)
+		fatalnWrapper(err)
+	} else {
+		log.Println(fmt.Sprintf("Cachefile %s not found, attempting to fetch threadID: %d",
+			cachedFileName, threadID))
+
+		if !fileExists(defaultDir) {
+			err := os.MkdirAll(defaultDir, 0777)
+			fatalnWrapper(err)
+		}
+		cachedFile, err = os.Create(cachedFileName)
+		fatalnWrapper(err)
+
+		comments = fetchFromAPI(float64(threadID))
+		err = json.NewEncoder(cachedFile).Encode(comments)
+		fatalnWrapper(err)
+	}
+
+	return comments
+}
+
 func main() {
 	threadID := flag.Int("threadID", 0, "The ID of the HN thread we will use")
 	outFileName := flag.String("outFile", "", "Write comments to this file. Defaults to stdout")
@@ -143,28 +207,7 @@ func main() {
 		"The keywords to filter comments on. Usage -keywords=\"keyword1 keyword2 keyword3\"")
 	flag.Parse()
 
-	var comments []hnComment
-
-	//If the file exists, read from it otherwise fetch all hncomments and store them
-	if _, err := os.Stat(defaultFileName); err == nil {
-		log.Println("Reading cached comments from", defaultFileName)
-		comments, err = fetchFromFile(defaultFileName)
-		if err != nil {
-			log.Fatalln(err)
-		}
-	} else {
-		log.Println(
-			"comments.json not found, attempting to fetch based on supplied threadID:", *threadID)
-		comments = fetchFromAPI(float64(*threadID))
-		defaultFile, err := os.Create(defaultFileName)
-		if err != nil {
-			log.Println("bazaaaa")
-			log.Fatalln(err)
-		}
-		if err = json.NewEncoder(defaultFile).Encode(comments); err != nil {
-			log.Fatalln(err)
-		}
-	}
+	comments := getComments(*threadID)
 
 	//The output file to write the filtered comments to, defaults to stdout
 	var outFile *os.File
@@ -174,9 +217,7 @@ func main() {
 	} else {
 		var err error
 		outFile, err = os.Create(*outFileName)
-		if err != nil {
-			log.Fatalln(err)
-		}
+		fatalnWrapper(err)
 	}
 	defer outFile.Close()
 
