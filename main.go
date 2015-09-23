@@ -177,7 +177,7 @@ func getComments(threadID int) []hnComment {
 	//If the file exists, read from it otherwise fetch all hncomments and store them
 	if fileExists(cachedFileName) {
 		log.Println("Reading cached comments from", cachedFileName)
-		cachedFile, err = os.Create(cachedFileName)
+		cachedFile, err = os.Open(cachedFileName)
 		fatalnWrapper(err)
 		comments, err = fetchFromFile(cachedFile)
 		fatalnWrapper(err)
@@ -209,18 +209,6 @@ func main() {
 
 	comments := getComments(*threadID)
 
-	//The output file to write the filtered comments to, defaults to stdout
-	var outFile *os.File
-	if *outFileName == "" {
-		log.Println("No outfile specified, defaulting to stdout")
-		outFile = os.Stdout
-	} else {
-		var err error
-		outFile, err = os.Create(*outFileName)
-		fatalnWrapper(err)
-	}
-	defer outFile.Close()
-
 	//If we have no keywords, pipe all to the outfile. Otherwise filter by keywords
 	var filter filterFunction
 	if len(*keywordsStr) == 0 {
@@ -240,6 +228,17 @@ func main() {
 
 	//Write json to our outfile if we have any filtered comments
 	if len(filteredComments) > 0 {
+		//The output file to write the filtered comments to, defaults to stdout
+		var outFile *os.File
+		if *outFileName == "" {
+			log.Println("No outfile specified, defaulting to stdout")
+			outFile = os.Stdout
+		} else {
+			var err error
+			outFile, err = os.Create(*outFileName)
+			fatalnWrapper(err)
+		}
+		defer outFile.Close()
 		if err := json.NewEncoder(outFile).Encode(filteredComments); err != nil {
 			log.Fatalln(err)
 		}
