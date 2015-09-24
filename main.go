@@ -139,17 +139,6 @@ func fatalnWrapper(err error) {
 	}
 }
 
-func getCachedFile(fileName string) (*os.File, error) {
-	_, err := os.Stat(fileName)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, err
-		} else {
-			log.Fatalln(err)
-		}
-	}
-	return os.Open(fileName)
-}
 func fileExists(filename string) bool {
 	_, err := os.Stat(filename)
 	if err != nil {
